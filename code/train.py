@@ -1,12 +1,36 @@
-import torch.nn as nn
+from CAMELOT import CamelotModel
+from datasets_dataloader_pytorch import *
 
-def mix_l1_l2_reg(l1_ratio, l2_ratio):
-    def regularizer(model):
-        l1_norm = sum(p.abs().sum() for p in model.parameters())
-        l2_norm = sum(p.pow(2.0).sum() for p in model.parameters())
-        return l1_ratio * l1_norm + l2_ratio * l2_norm
-    return regularizer
+epochs = 100
 
-l1_ratio = 0.01
-l2_ratio = 0.01
-optimizer = torch.optim.SGD(model.parameters(), lr=0.1, weight_decay=mix_l1_l2_reg(l1_ratio, l2_ratio))
+input_shape = (1, )
+
+model = CamelotModel(input_shape)
+model.initialize(train_data, val_data)
+
+encoder_optim = torch.optim.Adam(model.Identifier.parameters(), lr=0.001)
+identifier_optim = torch.optim.Adam(model.Identifier.parameters(), lr=0.001)
+predictor_optim = torch.optim.Adam(model.Identifier.parameters(), lr=0.001)
+cluster_optim = torch.optim.Adam(model.Identifier.parameters(), lr=0.001)
+
+for i in range(epochs):
+    epoch_loss = 0
+    for step_, (x_batch, clus_batch) in enumerate(temp):
+        encoder_optim.zero_grad()
+
+        clus_pred = self.Identifier(self.Encoder(x_batch))
+        loss = clus_pred_loss(clus_batch, clus_pred, self.weights)
+
+        loss.backward()
+        initialize_optim.step()
+
+        epoch_loss += loss.item()
+
+    with torch.no_grad():
+        clus_pred_val = self.Identifier(self.Encoder(x_val))
+        loss_val = clus_pred_loss(
+            clus_val, clus_pred_val, self.weights)
+
+    iden_loss[i] = loss_val.item()
+    if torch.le(iden_loss[-50:], loss_val.item() + 0.001).any():
+        break

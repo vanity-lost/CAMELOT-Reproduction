@@ -5,7 +5,7 @@ from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from old.src.data_processing.MIMIC.data_utils import convert_to_timedelta
+from data_utils import convert_to_timedelta
 
 
 # ---------------------------------------------------------------------------------------
@@ -19,17 +19,19 @@ from old.src.data_processing.MIMIC.data_utils import convert_to_timedelta
 # HAVEN_OUTCOME_NAMES = ['Healthy', 'Death', 'ICU', 'Card']
 
 MIMIC_PARSE_TIME_VARS = ["intime", "outtime", "chartmax"]
-MIMIC_PARSE_TD_VARS = ["sampled_time_to_end(1H)", "time_to_end", "time_to_end_min", "time_to_end_max"]
+MIMIC_PARSE_TD_VARS = [
+    "sampled_time_to_end(1H)", "time_to_end", "time_to_end_min", "time_to_end_max"]
 MIMIC_VITALS = ["TEMP", "HR", "RR", "SPO2", "SBP", "DBP"]
 MIMIC_STATIC = ["age", "gender", "ESI"]
-MIMIC_OUTCOME_NAMES = ["De" ,"I", "W", "Di"]
+MIMIC_OUTCOME_NAMES = ["De", "I", "W", "Di"]
 
-MAIN_ID_LIST = ["subject_id", "hadm_id", "stay_id", "patient_id", "pat_id"]  # Identifiers for main ids.
+# Identifiers for main ids.
+MAIN_ID_LIST = ["subject_id", "hadm_id", "stay_id", "patient_id", "pat_id"]
 
 # ----------------------------------------------------------------------------------------
 
-class CustomDataset(Dataset):
 
+class CustomDataset(Dataset):
 
     def __init__(self, data_name="MIMIC", target_window=4, feat_set='vitals', time_range=(24, 72)):
         self.data_name = data_name
@@ -43,7 +45,8 @@ class CustomDataset(Dataset):
         self.max = None
 
         # Load and process data
-        self.id_col, self.time_col, self.needs_time_to_end_computation = self.get_ids(self.dataset_name)
+        self.id_col, self.time_col, self.needs_time_to_end_computation = self.get_ids(
+            self.data_name)
         self.x, self.y, self.mask, self.pat_time_ids, self.features, self.outcomes, self.x_subset, self.y_data = self.load_transform()
 
     def __len__(self):
@@ -51,14 +54,14 @@ class CustomDataset(Dataset):
 
     def __getitem__(self, idx):
         # Extract data for given index
-        x = x[:,idx]
-        y = y[:,idx]
+        x = x[:, idx]
+        y = y[:, idx]
         mask = mask[idx]
-        pat_time_ids = pat_time_ids[:,idx]
+        pat_time_ids = pat_time_ids[:, idx]
         features = features[idx]
         outcomes = outcomes[idx]
-        x_subset = x_subset[:,idx]
-        y_data = y_data[:,idx]
+        x_subset = x_subset[:, idx]
+        y_data = y_data[:, idx]
         id_col = self.id_col
         time_col = self.time_col
         needs_time_to_end_computation = self.needs_time_to_end_computation
@@ -77,7 +80,8 @@ class CustomDataset(Dataset):
         data = self._load(self.data_name, window=self.target_window)
 
         # Get data info
-        self.id_col, self.time_col, self.needs_time_to_end_computation = self.get_ids(self.data_name)
+        self.id_col, self.time_col, self.needs_time_to_end_computation = self.get_ids(
+            self.data_name)
 
         # Add time to end and truncate if needed
         x_inter = self._add_time_to_end(data[0])
@@ -105,9 +109,6 @@ class CustomDataset(Dataset):
         self._check_input_format(x_out, y_out)
 
         return x_out, y_out, mask, pat_time_ids, features, outcomes, x_subset, y_data
-    
-
-
 
     def _load(self, data_name, window=4):
         """Load Trajectory, Target data jointly given data folder."""
@@ -119,12 +120,13 @@ class CustomDataset(Dataset):
         except AssertionError:
             print(data_fd)
 
-
         if "MIMIC" in data_name:
 
             # Load Data
-            X = pd.read_csv(data_fd + "vitals_process.csv", parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
-            y = pd.read_csv(data_fd + f"outcomes_{window}h_process.csv", index_col=0)
+            X = pd.read_csv(data_fd + "vitals_process.csv",
+                            parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
+            y = pd.read_csv(
+                data_fd + f"outcomes_{window}h_process.csv", index_col=0)
 
             # Convert columns to timedelta
             X = convert_to_timedelta(X, *MIMIC_PARSE_TD_VARS)
@@ -136,53 +138,55 @@ class CustomDataset(Dataset):
             y = None
 
         else:
-            raise ValueError(f"Data Name does not match available datasets. Input Folder provided {data_fd}")
+            raise ValueError(
+                f"Data Name does not match available datasets. Input Folder provided {data_fd}")
+
     def get_ids(self, data_name):
-            """
-            Get input id information.
+        """
+        Get input id information.
 
-            Params:
-            - data_folder: str, folder of dataset, or name of dataset.
+        Params:
+        - data_folder: str, folder of dataset, or name of dataset.
 
-            Returns:
-                - Tuple of id col, time col and whether time to end needs computation.
-            """
+        Returns:
+            - Tuple of id col, time col and whether time to end needs computation.
+        """
 
-            if "MIMIC" in data_name:
-                id_col, time_col, needs_time_to_end = "hadm_id", "sampled_time_to_end(1H)", False
+        if "MIMIC" in data_name:
+            id_col, time_col, needs_time_to_end = "hadm_id", "sampled_time_to_end(1H)", False
 
-            elif "SAMPLE" in data_name:
-                id_col, time_col, needs_time_to_end = None, None, None
+        elif "SAMPLE" in data_name:
+            id_col, time_col, needs_time_to_end = None, None, None
 
-            else:
-                raise ValueError(f"Data Name does not match available datasets. Input Folder provided {data_name}")
+        else:
+            raise ValueError(
+                f"Data Name does not match available datasets. Input Folder provided {data_name}")
 
-            return id_col, time_col, needs_time_to_end
-        
+        return id_col, time_col, needs_time_to_end
+
     def impute(self, X):
-            """
-            Imputation of 3D array accordingly with time as dimension 1:
-            1st - forward value propagation,
-            2nd - backwards value propagation,
-            3rd - median value imputation.
+        """
+        Imputation of 3D array accordingly with time as dimension 1:
+        1st - forward value propagation,
+        2nd - backwards value propagation,
+        3rd - median value imputation.
 
-            Mask returned at the end, corresponding to original missing values.
-            """
-            impute_step1 = self._numpy_forward_fill(X)
-            impute_step2 = self._numpy_backward_fill(impute_step1)
-            impute_step3 = self._median_fill(impute_step2)
+        Mask returned at the end, corresponding to original missing values.
+        """
+        impute_step1 = self._numpy_forward_fill(X)
+        impute_step2 = self._numpy_backward_fill(impute_step1)
+        impute_step3 = self._median_fill(impute_step2)
 
-            # Compute mask
-            mask = np.isnan(X)
+        # Compute mask
+        mask = np.isnan(X)
 
-            return impute_step3, mask
-    
+        return impute_step3, mask
+
     def convert_datetime_to_hour(self, series):
         """Convert pandas Series of datetime values to float Series with corresponding hour values"""
         seconds_per_hour = 3600
 
         return series.dt.total_seconds() / seconds_per_hour
-
 
     def _get_features(self, key, data_name="MIMIC"):
         """
@@ -203,7 +207,8 @@ class CustomDataset(Dataset):
                 vitals, vars1, vars2, static = None, None, None, None
 
             else:
-                raise ValueError(f"Data Name does not match available datasets. Input provided {data_name}")
+                raise ValueError(
+                    f"Data Name does not match available datasets. Input provided {data_name}")
 
             # Add features given substrings of key. We initialise set in case of repetition (e.g. 'vars1-lab')
             features = set([])
@@ -226,14 +231,16 @@ class CustomDataset(Dataset):
             if "all" in key.lower():
                 features = self._get_features("vit-lab-sta", data_name)
 
-            sorted_features = sorted(features)  # sorted returns a list of features.
-            print(f"\n{data_name} data has been subsettted to the following features: \n {sorted_features}.")
+            # sorted returns a list of features.
+            sorted_features = sorted(features)
+            print(
+                f"\n{data_name} data has been subsettted to the following features: \n {sorted_features}.")
 
             return sorted_features
 
         else:
-            raise TypeError(f"Argument key must be one of type str or list, type {type(key)} was given.")
-
+            raise TypeError(
+                f"Argument key must be one of type str or list, type {type(key)} was given.")
 
     def _numpy_forward_fill(self, array):
         """Forward Fill a numpy array. Time index is axis = 1."""
@@ -241,17 +248,17 @@ class CustomDataset(Dataset):
         array_out = np.copy(array)
 
         # Add time indices where not masked, and propagate forward
-        inter_array = np.where(~ array_mask, np.arange(array_mask.shape[1]).reshape(1, -1, 1), 0)
+        inter_array = np.where(~ array_mask, np.arange(
+            array_mask.shape[1]).reshape(1, -1, 1), 0)
         np.maximum.accumulate(inter_array, axis=1,
-                            out=inter_array)  # For each (n, t, d) missing value, get the previously accessible mask value
+                              out=inter_array)  # For each (n, t, d) missing value, get the previously accessible mask value
 
         # Index matching for output. For n, d sample as previously, use inter_array for previous time id
         array_out = array_out[np.arange(array_out.shape[0])[:, None, None],
-                            inter_array,
-                            np.arange(array_out.shape[-1])[None, None, :]]
+                              inter_array,
+                              np.arange(array_out.shape[-1])[None, None, :]]
 
         return array_out
-
 
     def _numpy_backward_fill(self, array):
         """Backward Fill a numpy array. Time index is axis = 1"""
@@ -259,14 +266,15 @@ class CustomDataset(Dataset):
         array_out = np.copy(array)
 
         # Add time indices where not masked, and propagate backward
-        inter_array = np.where(~ array_mask, np.arange(array_mask.shape[1]).reshape(1, -1, 1), array_mask.shape[1] - 1)
-        inter_array = np.minimum.accumulate(inter_array[:, ::-1], axis=1)[:, ::-1]
+        inter_array = np.where(~ array_mask, np.arange(
+            array_mask.shape[1]).reshape(1, -1, 1), array_mask.shape[1] - 1)
+        inter_array = np.minimum.accumulate(
+            inter_array[:, ::-1], axis=1)[:, ::-1]
         array_out = array_out[np.arange(array_out.shape[0])[:, None, None],
-                            inter_array,
-                            np.arange(array_out.shape[-1])[None, None, :]]
+                              inter_array,
+                              np.arange(array_out.shape[-1])[None, None, :]]
 
         return array_out
-
 
     def _median_fill(self, array):
         """Median fill a numpy array. Time index is axis = 1"""
@@ -274,11 +282,12 @@ class CustomDataset(Dataset):
         array_out = np.copy(array)
 
         # Compute median and impute
-        array_med = np.nanmedian(np.nanmedian(array, axis=0, keepdims=True), axis=1, keepdims=True)
+        array_med = np.nanmedian(np.nanmedian(
+            array, axis=0, keepdims=True), axis=1, keepdims=True)
         array_out = np.where(array_mask, array_med, array_out)
 
         return array_out
-    
+
     def _get_outcome_names(self, data_name):
         """Return the corresponding outcome columns given dataset name."""
         if data_name == "MIMIC":
@@ -286,7 +295,6 @@ class CustomDataset(Dataset):
 
         elif data_name == "SAMPLE":
             return None
-
 
     def _check_input_format(self, X, y):
         """Check conditions to confirm model input."""
@@ -313,17 +321,18 @@ class CustomDataset(Dataset):
             print(e)
             raise AssertionError("One of the check conditions has failed.")
 
-
     def _subset_to_balanced(X, y, mask, ids):
         """Subset samples so dataset is more well sampled."""
         class_numbers = np.sum(y, axis=0)
-        largest_class, target_num_samples = np.argmax(class_numbers), np.sort(class_numbers)[-2]
+        largest_class, target_num_samples = np.argmax(
+            class_numbers), np.sort(class_numbers)[-2]
         print("\nSubsetting class {} from {} to {} samples.".format(largest_class, class_numbers[largest_class],
-                                                                target_num_samples))
+                                                                    target_num_samples))
 
         # Select random
         largest_class_ids = np.arange(y.shape[0])[y[:, largest_class] == 1]
-        class_ids_samples = np.random.choice(largest_class_ids, size=target_num_samples, replace=False)
+        class_ids_samples = np.random.choice(
+            largest_class_ids, size=target_num_samples, replace=False)
         ids_to_remove_ = np.setdiff1d(largest_class_ids, class_ids_samples)
 
         # Remove relevant ids
@@ -333,7 +342,6 @@ class CustomDataset(Dataset):
         ids_out = np.delete(ids, ids_to_remove_, axis=0)
 
         return X_out, y_out, mask_out, ids_out
-        
 
     def _add_time_to_end(self, X):
         """Add new column to dataframe - this computes time to end of grouped observations, if needed."""
@@ -343,21 +351,25 @@ class CustomDataset(Dataset):
         if self.needs_time_to_end_computation is True:
 
             # Compute datetime values for time until end of group of observations
-            times = X.groupby(self.id_col).apply(lambda x: x.loc[:, self.time_col].max() - x.loc[:, self.time_col])
+            times = X.groupby(self.id_col).apply(
+                lambda x: x.loc[:, self.time_col].max() - x.loc[:, self.time_col])
 
             # add column to dataframe after converting to hourly times.
-            x_inter["time_to_end"] = self.convert_datetime_to_hour(times).values
+            x_inter["time_to_end"] = self.convert_datetime_to_hour(
+                times).values
 
         else:
             x_inter["time_to_end"] = x_inter[self.time_col].values
-            x_inter["time_to_end"] = self.convert_datetime_to_hour(x_inter.loc[:, "time_to_end"])
+            x_inter["time_to_end"] = self.convert_datetime_to_hour(
+                x_inter.loc[:, "time_to_end"])
 
         # Sort data
         self.time_col = "time_to_end"
-        x_out = x_inter.sort_values(by=[self.id_col, "time_to_end"], ascending=[True, False])
+        x_out = x_inter.sort_values(
+            by=[self.id_col, "time_to_end"], ascending=[True, False])
 
         return x_out
-    
+
     def _truncate(self, X):
         """Truncate dataset on time to end column according to self.time_range."""
         try:
@@ -365,16 +377,19 @@ class CustomDataset(Dataset):
             return X[X['time_to_end'].between(min_time, max_time, inclusive="left")]
 
         except Exception:
-            raise ValueError(f"Could not truncate to {self.time_range} time range successfully")
+            raise ValueError(
+                f"Could not truncate to {self.time_range} time range successfully")
 
     def _check_correct_time_conversion(self, X):
         """Check addition and truncation of time index worked accordingly."""
 
         cond1 = X[self.id_col].is_monotonic
-        cond2 = X.groupby(self.id_col).apply(lambda x: x["time_to_end"].is_monotonic_decreasing).all()
+        cond2 = X.groupby(self.id_col).apply(
+            lambda x: x["time_to_end"].is_monotonic_decreasing).all()
 
         min_time, max_time = self.time_range
-        cond3 = X["time_to_end"].between(min_time, max_time, inclusive='left').all()
+        cond3 = X["time_to_end"].between(
+            min_time, max_time, inclusive='left').all()
 
         assert cond1 is True
         assert cond2 == True
@@ -382,7 +397,8 @@ class CustomDataset(Dataset):
 
     def subset_to_features(self, X):
         """Subset only to variables which were selected"""
-        features = [self.id_col, "time_to_end"] + self._get_features(self.feat_set, self.dataset_name)
+        features = [self.id_col, "time_to_end"] + \
+            self._get_features(self.feat_set, self.data_name)
 
         return X[features], features
 
@@ -394,7 +410,8 @@ class CustomDataset(Dataset):
         num_ids = X[self.id_col].nunique()
 
         # Other basic definitions
-        feats = [col for col in X.columns if col not in [self.id_col, "time_to_end"]]
+        feats = [col for col in X.columns if col not in [
+            self.id_col, "time_to_end"]]
         list_ids = X[self.id_col].unique()
 
         # Initialise output array and id-time array
@@ -405,7 +422,8 @@ class CustomDataset(Dataset):
         id_times_array = np.empty(shape=(num_ids, max_time_length, 2))
 
         # Set ids in this newly generated array
-        id_times_array[:, :, 0] = np.repeat(np.expand_dims(list_ids, axis=-1), repeats=max_time_length, axis=-1)
+        id_times_array[:, :, 0] = np.repeat(np.expand_dims(
+            list_ids, axis=-1), repeats=max_time_length, axis=-1)
 
         # Iterate through ids
         for id_ in tqdm(list_ids):
@@ -419,7 +437,8 @@ class CustomDataset(Dataset):
 
             # Update target output array and time information array
             out_array[index_, :x_id_copy.shape[0], :] = x_id_copy[feats].values
-            id_times_array[index_, :x_id_copy.shape[0], 1] = x_id["time_to_end"].values
+            id_times_array[index_, :x_id_copy.shape[0],
+                           1] = x_id["time_to_end"].values
 
         return out_array.astype("float32"), id_times_array.astype("float32")
 
@@ -433,12 +452,11 @@ class CustomDataset(Dataset):
     def apply_normalisation(self, X):
         """Apply normalisation with current parameters to another dataset."""
         if self.min is None or self.max is None:
-            raise ValueError(f"Attributes min and/or max are not yet computed. Run 'normalise' method instead.")
+            raise ValueError(
+                f"Attributes min and/or max are not yet computed. Run 'normalise' method instead.")
 
         else:
             return np.divide(X - self.min, self.max - self.min)
-        
-
 
 
 # Custom Dataloader
@@ -450,10 +468,12 @@ def load_data(dataset, batch_size=128):
 
     def my_collate(data):
 
-        x, y, mask, pat_time_ids, features, outcomes, x_subset, y_data, id_col, time_col, needs_time_to_end_computation, data_name, feat_set, time_range, target_window, min, max = zip(*data)
-        data_config = {"data_name": data_name, "feat_set": feat_set, "time_range (h)": time_range, "target_window": target_window}
+        x, y, mask, pat_time_ids, features, outcomes, x_subset, y_data, id_col, time_col, needs_time_to_end_computation, data_name, feat_set, time_range, target_window, min, max = zip(
+            *data)
+        data_config = {"data_name": data_name, "feat_set": feat_set,
+                       "time_range (h)": time_range, "target_window": target_window}
         data_properties = {"feats": features, "id_col": id_col, "time_col": time_col,
-                       "norm_min": min, "norm_max": max, "outc_names": outcomes}
+                           "norm_min": min, "norm_max": max, "outc_names": outcomes}
 
         x = torch.tensor(x)
         y = torch.tensor(y)
@@ -465,8 +485,5 @@ def load_data(dataset, batch_size=128):
         y_data = torch.tensor(y_data)
 
         return (x_subset, y_data), x, y, pat_time_ids, mask, data_properties, data_config
-    
+
     return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=my_collate)
-
-
-
