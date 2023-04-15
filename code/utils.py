@@ -11,9 +11,10 @@ def torch_log(x):
 
 
 def calc_pred_loss(y_true, y_pred, weights=None):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if weights is None:
         weights = torch.ones(y_true.shape) / y_true.shape[-1]
-    return - torch.mean(torch.sum(weights * y_true * torch_log(y_pred), axis=-1))
+    return - torch.mean(torch.sum(weights.to(device) * y_true.to(device) * torch_log(y_pred).to(device), axis=-1))
 
 
 def calc_dist_loss(probs):
@@ -27,7 +28,7 @@ def calc_clus_loss(clusters):
     loss = torch.sum(pairewise_loss)
 
     K = clusters.shape[0]
-    return loss / (K * (K-1) / 2).float()
+    return (loss / (K * (K-1) / 2)).float()
 
 
 # import torch.nn as nn

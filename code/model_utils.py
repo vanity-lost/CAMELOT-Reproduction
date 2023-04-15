@@ -6,14 +6,16 @@ class FeatTimeAttention(nn.Module):
     def __init__(self, latent_dim, input_shape):
         super().__init__()
 
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
         self.latent_dim = latent_dim
         T, D_f = input_shape
         # Define Kernel and Bias for Feature Projection
         self.kernel = torch.zeros(
-            (1, 1, D_f, self.latent_dim), requires_grad=True)
+            (1, 1, D_f, self.latent_dim), requires_grad=True).to(self.device)
         nn.init.xavier_uniform_(self.kernel)
         self.bias = torch.zeros(
-            (1, 1, D_f, self.latent_dim), requires_grad=True)
+            (1, 1, D_f, self.latent_dim), requires_grad=True).to(self.device)
         nn.init.uniform_(self.bias)
 
         # Define Time aggregation weights for averaging over time.
@@ -24,7 +26,7 @@ class FeatTimeAttention(nn.Module):
         o_hat, _ = self.generate_latent_approx(x, latent)
         weights = self.calc_weights(self.unnorm_beta)
         # print(o_hat.shape, weights.shape)
-        return torch.sum(torch.mul(o_hat, weights), dim=1)
+        return torch.sum(torch.mul(o_hat.to(self.device), weights.to(self.device)), dim=1)
 
     def generate_latent_approx(self, x, latent):
         features = torch.mul(x.unsqueeze(-1), self.kernel) + self.bias
