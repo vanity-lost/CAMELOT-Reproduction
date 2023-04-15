@@ -1,5 +1,6 @@
 from sklearn.cluster import KMeans
 import numpy as np
+from tqdm import trange
 
 import torch
 import torch.nn as nn
@@ -34,9 +35,9 @@ class CamelotModel(nn.Module):
         self.mlp_hidden_dim = mlp_hidden_dim
 
         # three newtorks
-        self.Encoder = Encoder(self.input_shape, self.attention_hidden_dim, self.latent_dim,self.dropout)
-        self.Identifier = Identifier(self.latent_dim, self.mlp_hidden_dim, self.dropout, self.output_dim)
-        self.Predictor = Predictor(self.output_dim, self.mlp_hidden_dim, self.dropout)
+        self.Encoder = Encoder(self.input_shape, self.attention_hidden_dim, self.latent_dim, self.dropout)
+        self.Identifier = Identifier(self.latent_dim, self.mlp_hidden_dim, self.dropout, self.num_clusters)
+        self.Predictor = Predictor(self.num_clusters, self.mlp_hidden_dim, self.dropout, self.output_dim)
 
         # Cluster Representation params
         self.cluster_rep_set = torch.zeros(
@@ -102,11 +103,13 @@ class CamelotModel(nn.Module):
 
         # initialize cluster
         clus_train, clus_val = self.initialize_cluster(x_train, x_val)
+        self.clus_train = clus_train
+        self.x_train = x_train
 
         # initialize identifier
         self.initialize_identifier(x_train, clus_train, x_val, clus_val)
 
-    def initialize_encoder(self, x_train, y_train, x_val, y_val, epochs=100, batch_size=64):
+    def initialize_encoder(self, x_train, y_train, x_val, y_val, epochs=10, batch_size=64):
         temp = DataLoader(
             dataset=TensorDataset(x_train, y_train),
             shuffle=True,
@@ -117,14 +120,13 @@ class CamelotModel(nn.Module):
         initialize_optim = torch.optim.Adam(
             self.Encoder.parameters(), lr=0.001)
 
-        for i in range(epochs):
+        for i in trange(epochs):
             epoch_loss = 0
             for _, (x_batch, y_batch) in enumerate(temp):
                 initialize_optim.zero_grad()
                 
                 z = self.Encoder(x_batch)
-                print(z)
-                y_pred = self.Identifier(z)
+                y_pred = self.Predictor(self.Identifier(z))
                 loss = calc_pred_loss(y_batch, y_pred, self.loss_weights)
 
                 loss.backward()
@@ -133,30 +135,33 @@ class CamelotModel(nn.Module):
                 epoch_loss += loss.item()
 
             with torch.no_grad():
-                y_pred_val = self.Identifier(self.Encoder(x_val))
+                z = self.Encoder(x_val)
+                y_pred_val = self.Predictor(self.Identifier(z))
                 loss_val = calc_pred_loss(y_val, y_pred_val, self.loss_weights)
 
             iden_loss[i] = loss_val.item()
             if torch.le(iden_loss[-50:], loss_val.item() + 0.001).any():
                 break
 
-        print('Identifier initialization done!')
+        print('Encoder initialization done!')
 
     def initialize_cluster(self, x_train, x_val):
-        z = self.Encoder(x_train).numpy()
+        z = self.Encoder(x_train).detach().numpy()
         kmeans = KMeans(self.num_clusters, random_state=self.seed)
         kmeans.fit(z)
         print('Kmeans initialization done!')
 
         self.cluster_rep_set = torch.tensor(
             kmeans.cluster_centers_, dtype=torch.float32)
-        train_cluster = np.eye(self.num_clusters)[
-            kmeans.predict(z)].astype(np.float32)
-        val_cluster = np.eye(self.num_clusters)[kmeans.predict(
-            self.Encoder(x_val).numpy())].astype(np.float32)
+        train_cluster = torch.eye(self.num_clusters)[
+            kmeans.predict(z)]
+        val_cluster = torch.eye(self.num_clusters)[kmeans.predict(
+            self.Encoder(x_val).detach().numpy())]
+        
+        print('Cluster initialization done!')
         return train_cluster, val_cluster
 
-    def initialize_identifier(self, x_train, clus_train, x_val, clus_val, epochs=100, batch_size=64):
+    def initialize_identifier(self, x_train, clus_train, x_val, clus_val, epochs=10, batch_size=64):
         temp = DataLoader(
             dataset=TensorDataset(x_train, clus_train),
             shuffle=True,
@@ -167,13 +172,14 @@ class CamelotModel(nn.Module):
         initialize_optim = torch.optim.Adam(
             self.Identifier.parameters(), lr=0.001)
 
-        for i in range(epochs):
+        for i in trange(epochs):
             epoch_loss = 0
             for step_, (x_batch, clus_batch) in enumerate(temp):
                 initialize_optim.zero_grad()
 
                 clus_pred = self.Identifier(self.Encoder(x_batch))
-                loss = calc_pred_loss(clus_batch, clus_pred, self.weights)
+                print(clus_pred.shape, clus_batch.shape)
+                loss = calc_pred_loss(clus_batch, clus_pred, self.loss_weights)
 
                 loss.backward()
                 initialize_optim.step()
@@ -182,8 +188,8 @@ class CamelotModel(nn.Module):
 
             with torch.no_grad():
                 clus_pred_val = self.Identifier(self.Encoder(x_val))
-                loss_val = calc_pred_loss(
-                    clus_val, clus_pred_val, self.weights)
+                print(clus_val.shape, clus_pred_val.shape)
+                loss_val = calc_pred_loss(clus_val, clus_pred_val, self.loss_weights)
 
             iden_loss[i] = loss_val.item()
             if torch.le(iden_loss[-50:], loss_val.item() + 0.001).any():

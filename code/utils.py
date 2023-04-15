@@ -11,7 +11,7 @@ def torch_log(x):
 
 
 def calc_pred_loss(y_true, y_pred, weights):
-    return - torch.mean(weights * y_true * torch_log(y_pred), dim=-1)
+    return - torch.mean(torch.sum(weights * y_true * torch_log(y_pred), axis=-1))
 
 
 def calc_dist_loss(probs):

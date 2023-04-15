@@ -60,8 +60,7 @@ class Encoder(nn.Module):
                             batch_first=True)
         self.lstm2 = nn.LSTM(input_size=attention_hidden_dim, 
                             hidden_size=latent_dim,
-                            num_layers=2, 
-                            dropout=dropout, 
+                            num_layers=1,  
                             batch_first=True)
         self.attention = FeatTimeAttention(latent_dim, input_shape)
         
@@ -73,9 +72,9 @@ class Encoder(nn.Module):
 
 
 class Identifier(nn.Module):
-    def __init__(self, latent_dim, mlp_hidden_dim, dropout, output_dim):
+    def __init__(self, input_dim, mlp_hidden_dim, dropout, output_dim):
         super().__init__()        
-        self.fc1 = nn.Linear(latent_dim, mlp_hidden_dim)
+        self.fc1 = nn.Linear(input_dim, mlp_hidden_dim)
         self.sigmoid1 = nn.Sigmoid()
 
         self.fc2 = nn.Linear(mlp_hidden_dim, mlp_hidden_dim)
@@ -106,9 +105,9 @@ class Identifier(nn.Module):
         return x
     
 class Predictor(nn.Module):
-    def __init__(self, output_dim, mlp_hidden_dim, dropout):
+    def __init__(self, input_dim, mlp_hidden_dim, dropout, output_dim):
         super().__init__()
-        self.fc1 = nn.Linear(output_dim, mlp_hidden_dim)
+        self.fc1 = nn.Linear(input_dim, mlp_hidden_dim)
         self.sigmoid1 = nn.Sigmoid()
 
         self.fc2 = nn.Linear(mlp_hidden_dim, mlp_hidden_dim)
