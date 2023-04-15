@@ -515,7 +515,7 @@ class CAMELOT(tf.keras.Model):
             epoch, epoch_loss / step_, loss_val))
             self._iden_loss_tracker.loc[epoch, :] = [epoch_loss / step_, loss_val]
 
-            # Check if has improved or not - look at last 50 epoch validation loss and check if 
+            # Check if has improved or not - look at last 50 epoch validation loss and check if
             if self._iden_loss_tracker.iloc[-50:, -1].le(loss_val + 0.001).any():
                 break
 

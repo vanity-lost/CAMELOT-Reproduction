@@ -6,8 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-from attention import FeatTimeAttention
-from utils import clus_pred_loss
+from model_utils import Encoder, Identifier, Predictor
+from utils import calc_pred_loss
 
 
 class CamelotModel(nn.Module):
@@ -34,38 +34,9 @@ class CamelotModel(nn.Module):
         self.mlp_hidden_dim = mlp_hidden_dim
 
         # three newtorks
-        self.Encoder = nn.Sequential(
-            # TODO: check input_dim
-            nn.LSTM(1, self.attention_hidden_dim,
-                    num_layers=3, dropout=self.dropout),
-            FeatTimeAttention(self.latent_dim, self.input_shape),
-        )
-        self.Identifier = nn.Sequential(
-            # TODO: check input_dim
-            nn.Linear(1, self.mlp_hidden_dim),
-            nn.Sigmoid(),
-            nn.Linear(self.mlp_hidden_dim, self.mlp_hidden_dim),
-            nn.Sigmoid(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.mlp_hidden_dim, self.mlp_hidden_dim),
-            nn.Sigmoid(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.mlp_hidden_dim, self.output_dim),
-            nn.Softmax(),
-        )
-        self.Predictor = nn.Sequential(
-            # TODO: check input_dim
-            nn.Linear(1, self.mlp_hidden_dim),
-            nn.Sigmoid(),
-            nn.Linear(self.mlp_hidden_dim, self.mlp_hidden_dim),
-            nn.Sigmoid(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.mlp_hidden_dim, self.mlp_hidden_dim),
-            nn.Sigmoid(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.mlp_hidden_dim, self.output_dim),
-            nn.Softmax(),
-        )
+        self.Encoder = Encoder(self.input_shape, self.attention_hidden_dim, self.latent_dim,self.dropout)
+        self.Identifier = Identifier(self.latent_dim, self.mlp_hidden_dim, self.dropout, self.output_dim)
+        self.Predictor = Predictor(self.output_dim, self.mlp_hidden_dim, self.dropout)
 
         # Cluster Representation params
         self.cluster_rep_set = torch.zeros(
@@ -79,6 +50,13 @@ class CamelotModel(nn.Module):
         samples = self.get_sample(probs)
         representations = self.get_representations(samples)
         return self.Predictor(representations)
+
+    def forward_pass(self, x):
+        z = self.Encoder(x)
+        probs = self.Identifier(z)
+        samples = self.get_sample(probs)
+        representations = self.get_representations(samples)
+        return self.Predictor(representations), probs
 
     def get_sample(self, probs):
         logits = torch.log(probs.reshape(-1, self.num_clusters))
@@ -143,9 +121,11 @@ class CamelotModel(nn.Module):
             epoch_loss = 0
             for _, (x_batch, y_batch) in enumerate(temp):
                 initialize_optim.zero_grad()
-
-                y_pred = self.Identifier(self.Encoder(x_batch))
-                loss = clus_pred_loss(y_batch, y_pred, self.weights)
+                
+                z = self.Encoder(x_batch)
+                print(z)
+                y_pred = self.Identifier(z)
+                loss = calc_pred_loss(y_batch, y_pred, self.loss_weights)
 
                 loss.backward()
                 initialize_optim.step()
@@ -154,7 +134,7 @@ class CamelotModel(nn.Module):
 
             with torch.no_grad():
                 y_pred_val = self.Identifier(self.Encoder(x_val))
-                loss_val = clus_pred_loss(y_val, y_pred_val, self.weights)
+                loss_val = calc_pred_loss(y_val, y_pred_val, self.loss_weights)
 
             iden_loss[i] = loss_val.item()
             if torch.le(iden_loss[-50:], loss_val.item() + 0.001).any():
@@ -193,7 +173,7 @@ class CamelotModel(nn.Module):
                 initialize_optim.zero_grad()
 
                 clus_pred = self.Identifier(self.Encoder(x_batch))
-                loss = clus_pred_loss(clus_batch, clus_pred, self.weights)
+                loss = calc_pred_loss(clus_batch, clus_pred, self.weights)
 
                 loss.backward()
                 initialize_optim.step()
@@ -202,7 +182,7 @@ class CamelotModel(nn.Module):
 
             with torch.no_grad():
                 clus_pred_val = self.Identifier(self.Encoder(x_val))
-                loss_val = clus_pred_loss(
+                loss_val = calc_pred_loss(
                     clus_val, clus_pred_val, self.weights)
 
             iden_loss[i] = loss_val.item()
