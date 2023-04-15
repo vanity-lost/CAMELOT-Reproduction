@@ -10,7 +10,9 @@ def torch_log(x):
     return torch.log(x + 1e-8)
 
 
-def calc_pred_loss(y_true, y_pred, weights):
+def calc_pred_loss(y_true, y_pred, weights=None):
+    if weights is None:
+        weights = torch.ones(y_true.shape) / y_true.shape[-1]
     return - torch.mean(torch.sum(weights * y_true * torch_log(y_pred), axis=-1))
 
 
