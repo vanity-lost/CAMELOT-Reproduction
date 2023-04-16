@@ -2,11 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class FeatTimeAttention(nn.Module):
     def __init__(self, latent_dim, input_shape):
         super().__init__()
 
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(
+            'cuda' if torch.cuda.is_available() else 'cpu')
 
         self.latent_dim = latent_dim
         T, D_f = input_shape
@@ -54,18 +56,18 @@ class FeatTimeAttention(nn.Module):
 
 class Encoder(nn.Module):
     def __init__(self, input_shape, attention_hidden_dim, latent_dim, dropout):
-        super().__init__()        
-        self.lstm1 = nn.LSTM(input_size=input_shape[1], 
-                            hidden_size=attention_hidden_dim,
-                            num_layers=2, 
-                            dropout=dropout, 
-                            batch_first=True)
-        self.lstm2 = nn.LSTM(input_size=attention_hidden_dim, 
-                            hidden_size=latent_dim,
-                            num_layers=1,  
-                            batch_first=True)
+        super().__init__()
+        self.lstm1 = nn.LSTM(input_size=input_shape[1],
+                             hidden_size=attention_hidden_dim,
+                             num_layers=2,
+                             dropout=dropout,
+                             batch_first=True)
+        self.lstm2 = nn.LSTM(input_size=attention_hidden_dim,
+                             hidden_size=latent_dim,
+                             num_layers=1,
+                             batch_first=True)
         self.attention = FeatTimeAttention(latent_dim, input_shape)
-        
+
     def forward(self, x):
         latent_rep, _ = self.lstm1(x)
         latent_rep, _ = self.lstm2(latent_rep)
@@ -75,7 +77,7 @@ class Encoder(nn.Module):
 
 class Identifier(nn.Module):
     def __init__(self, input_dim, mlp_hidden_dim, dropout, output_dim):
-        super().__init__()        
+        super().__init__()
         self.fc1 = nn.Linear(input_dim, mlp_hidden_dim)
         self.sigmoid1 = nn.Sigmoid()
 
@@ -83,13 +85,9 @@ class Identifier(nn.Module):
         self.sigmoid2 = nn.Sigmoid()
         self.dropout1 = nn.Dropout(dropout)
 
-        self.fc3 = nn.Linear(mlp_hidden_dim, mlp_hidden_dim)
-        self.sigmoid3 = nn.Sigmoid()
-        self.dropout2 = nn.Dropout(dropout)
-
         self.fc4 = nn.Linear(mlp_hidden_dim, output_dim)
         self.softmax = nn.Softmax(dim=1)
-        
+
     def forward(self, x):
         x = self.fc1(x)
         x = self.sigmoid1(x)
@@ -98,14 +96,11 @@ class Identifier(nn.Module):
         x = self.sigmoid2(x)
         x = self.dropout1(x)
 
-        x = self.fc3(x)
-        x = self.sigmoid3(x)
-        x = self.dropout2(x)
-
         x = self.fc4(x)
         x = self.softmax(x)
         return x
-    
+
+
 class Predictor(nn.Module):
     def __init__(self, input_dim, mlp_hidden_dim, dropout, output_dim):
         super().__init__()
@@ -122,7 +117,7 @@ class Predictor(nn.Module):
 
         self.fc4 = nn.Linear(mlp_hidden_dim, output_dim)
         self.softmax = nn.Softmax(dim=1)
-        
+
     def forward(self, x):
         x = self.fc1(x)
         x = self.sigmoid1(x)
@@ -138,3 +133,39 @@ class Predictor(nn.Module):
         x = self.fc4(x)
         x = self.softmax(x)
         return x
+
+
+class MyLRScheduler():
+    def __init__(self, optimizer, patience, min_lr, factor):
+        self.optimizer = optimizer
+        self.patience = patience
+        self.min_lr = min_lr
+        self.factor = factor
+        self.wait = 0
+        self.best_loss = float('inf')
+
+    def step(self, val_loss):
+        if val_loss < self.best_loss:
+            self.best_loss = val_loss
+            self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                self.wait = 0
+                for param_group in self.optimizer.param_groups:
+                    old_lr = param_group['lr']
+                    new_lr = max(old_lr * self.factor, self.min_lr)
+                    param_group['lr'] = new_lr
+
+
+def calc_l1_l2_loss(part=None, layers=None):
+    para = []
+    if part:
+        for parameter in part.parameters():
+            para.append(parameter.view(-1))
+        parameters = torch.cat(para)
+    if layers:
+        for layer in layers:
+            para.extend(layer.parameters())
+        parameters = torch.cat([p.view(-1) for p in para])
+    return 1e-30 * torch.abs(parameters).sum() + 1e-30 * torch.square(parameters).sum()
