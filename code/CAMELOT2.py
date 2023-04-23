@@ -71,11 +71,15 @@ class CamelotModel(nn.Module):
         z = self.Encoder(x)
         probs = self.Identifier(z)
         # print(probs.shape)
-        samples = self.get_sample(probs)
-        # print(samples.shape)
-        representations = self.get_representations(samples)
-        # print(representations.shape)
-        return self.Predictor(representations), probs
+        # samples = self.get_sample(probs)
+        # # print(samples.shape)
+        # representations = self.get_representations(samples)
+        # # print(representations.shape)
+        # return self.Predictor(representations), probs
+        clus_phens = self.Predictor(self.cluster_rep_set.to(device))
+        y_pred = torch.matmul(probs, clus_phens)
+
+        return y_pred, probs
 
     def get_sample(self, probs):
         logits = - torch.log(probs.reshape(-1, self.num_clusters))
@@ -145,7 +149,7 @@ class CamelotModel(nn.Module):
                 loss = calc_pred_loss(
                     y_batch, y_pred, self.loss_weights) + calc_l1_l2_loss(part=self.Encoder)
 
-                loss.backward(inputs=list(self.Encoder.parameters()))
+                loss.backward()
                 initialize_optim.step()
 
                 epoch_loss += loss.item()
@@ -197,7 +201,7 @@ class CamelotModel(nn.Module):
                 loss = calc_pred_loss(clus_batch, clus_pred) + \
                     calc_l1_l2_loss(layers=[self.Identifier.fc2])
 
-                loss.backward(inputs=list(self.Identifier.parameters()))
+                loss.backward()
                 initialize_optim.step()
 
                 epoch_loss += loss.item()

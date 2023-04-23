@@ -26,7 +26,7 @@ MAIN_ID_LIST = ["subject_id", "hadm_id", "stay_id", "patient_id", "pat_id"]
 
 class CustomDataset(Dataset):
 
-    def __init__(self, data_name="MIMIC", target_window=12, feat_set='vit-sta', time_range=(0, 10), parameters=None):
+    def __init__(self, data_name="MIMIC", target_window=12, feat_set='vit-sta', time_range=(0, 6), parameters=None):
         if parameters is None:
             self.data_name = data_name
             self.target_window = target_window
