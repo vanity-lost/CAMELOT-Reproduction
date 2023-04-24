@@ -10,7 +10,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from model_utils import Encoder, Identifier, Predictor, calc_l1_l2_loss
 from utils import calc_pred_loss
 
-SEED = 12345
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -25,7 +24,7 @@ def class_weight(y):
 
 
 class CamelotModel(nn.Module):
-    def __init__(self, input_shape, num_clusters=10, latent_dim=128, seed=SEED, output_dim=4,
+    def __init__(self, input_shape, num_clusters=10, latent_dim=128, seed=12345, output_dim=4,
                  alpha=0.01, beta=0.001, regularization=(0.01, 0.01), dropout=0.0,
                  cluster_rep_lr=0.001, weighted_loss=True, attention_hidden_dim=16,
                  mlp_hidden_dim=30):
@@ -70,12 +69,10 @@ class CamelotModel(nn.Module):
     def forward_pass(self, x):
         z = self.Encoder(x)
         probs = self.Identifier(z)
-        # print(probs.shape)
-        samples = self.get_sample(probs)
-        # print(samples.shape)
-        representations = self.get_representations(samples)
-        # print(representations.shape)
-        return self.Predictor(representations), probs
+        clus_phens = self.Predictor(self.cluster_rep_set.to(device))
+        y_pred = torch.matmul(probs, clus_phens)
+
+        return y_pred, probs
 
     def get_sample(self, probs):
         logits = - torch.log(probs.reshape(-1, self.num_clusters))
@@ -99,14 +96,6 @@ class CamelotModel(nn.Module):
 
     def compute_cluster_phenotypes(self):
         return self.Predictor(self.cluster_rep_set).numpy()
-
-    # def compute_unnorm_attention_weights(self, inputs):
-    #     # no idea
-    #     return self.Encoder.compute_unnorm_scores(inputs, cluster_reps=self.cluster_rep_set)
-
-    # def compute_norm_attention_weights(self, inputs):
-    #     # no idea
-    #     return self.Encoder.compute_norm_scores(inputs, cluster_reps=self.cluster_rep_set)
 
     def initialize(self, train_data, val_data):
         x_train, y_train = train_data
@@ -135,6 +124,7 @@ class CamelotModel(nn.Module):
         initialize_optim = torch.optim.Adam(
             self.Encoder.parameters(), lr=0.001)
 
+        count = 0
         for i in trange(epochs):
             epoch_loss = 0
             for _, (x_batch, y_batch) in enumerate(temp):
@@ -155,10 +145,19 @@ class CamelotModel(nn.Module):
                 y_pred_val = self.Predictor(z)
                 loss_val = calc_pred_loss(y_val, y_pred_val, self.loss_weights)
 
+            if iden_loss.min() > loss_val.item():
+                torch.save(self.state_dict(), './best_model')
+                count = 0
+            else:
+                if i < 20:
+                    continue
+                else:
+                    count += 1
+                    if count >= 20:
+                        break
             iden_loss[i] = loss_val.item()
-            if torch.le(iden_loss[-50:], loss_val.item() + 0.001).any():
-                break
 
+        self.load_state_dict(torch.load('./best_model'))
         print('Encoder initialization done!')
 
     def initialize_cluster(self, x_train, x_val):
@@ -188,6 +187,7 @@ class CamelotModel(nn.Module):
         initialize_optim = torch.optim.Adam(
             self.Identifier.parameters(), lr=0.001)
 
+        count = 0
         for i in trange(epochs):
             epoch_loss = 0
             for step_, (x_batch, clus_batch) in enumerate(temp):
@@ -206,8 +206,17 @@ class CamelotModel(nn.Module):
                 clus_pred_val = self.Identifier(self.Encoder(x_val))
                 loss_val = calc_pred_loss(clus_val, clus_pred_val)
 
+            if iden_loss.min() > loss_val.item():
+                torch.save(self.state_dict(), './best_model')
+                count = 0
+            else:
+                if i < 20:
+                    continue
+                else:
+                    count += 1
+                    if count >= 20:
+                        break
             iden_loss[i] = loss_val.item()
-            if torch.le(iden_loss[-50:], loss_val.item() + 0.001).any():
-                break
 
+        self.load_state_dict(torch.load('./best_model'))
         print('Identifier initialization done!')
