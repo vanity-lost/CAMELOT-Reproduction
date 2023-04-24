@@ -167,7 +167,7 @@ class CamelotModel(nn.Module):
 
     def initialize_cluster(self, x_train, x_val):
         z = self.Encoder(x_train).cpu().detach().numpy()
-        kmeans = KMeans(self.num_clusters, random_state=self.seed)
+        kmeans = KMeans(self.num_clusters, random_state=self.seed, n_init='auto')
         kmeans.fit(z)
         print('Kmeans initialization done!')
 

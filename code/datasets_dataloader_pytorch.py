@@ -399,7 +399,7 @@ class CustomDataset(Dataset):
     def _check_correct_time_conversion(self, X):
         """Check addition and truncation of time index worked accordingly."""
 
-        cond1 = X[self.id_col].is_monotonic
+        cond1 = X[self.id_col].is_monotonic_increasing
         cond2 = X.groupby(self.id_col).apply(
             lambda x: x["time_to_end"].is_monotonic_decreasing).all()
 
@@ -485,8 +485,8 @@ def collate_fn(data):
     data_properties = {"feats": features, "id_col": id_col, "time_col": time_col,
                        "norm_min": min, "norm_max": max, "outc_names": outcomes}
 
-    x = torch.tensor(x)
-    y = torch.tensor(y)
+    x = torch.tensor(np.array(x))
+    y = torch.tensor(np.array(y))
     x = x.to(device)
     y = y.to(device)
     # mask = torch.tensor(mask)
