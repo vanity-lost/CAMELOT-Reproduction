@@ -4,7 +4,6 @@ import pandas as pd
 from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
-
 from data_utils import convert_to_timedelta
 
 
@@ -39,7 +38,7 @@ class CustomDataset(Dataset):
             self.max = None
 
             # Load & process data
-            self.id_col, self.time_col, self.needs_time_to_end_computation = self.get_ids(
+            self.id_col, self.time_col, self.needs_time_to_end_computation = self._get_ids(
                 self.data_name)
             self.x, self.y, self.mask, self.pat_time_ids, self.features, self.outcomes, self.x_subset, self.y_data = self.load_transform()
         else:
@@ -74,24 +73,28 @@ class CustomDataset(Dataset):
     def load_transform(self):
         # Load data
         data = self._load(self.data_name, window=self.target_window)
-        self.id_col, self.time_col, self.needs_time_to_end_computation = self.get_ids(
+        self.id_col, self.time_col, self.needs_time_to_end_computation = self._get_ids(
             self.data_name)
         # print(data[0].shape, '0')
-        x_inter = self._add_time_to_end(data[0])
+        x_inter = self._add_col_time_to_end(data[0])
         # print(x_inter.shape, '1')
         x_inter = self._truncate(x_inter)
         # print(x_inter.shape, '2')
         self._check_time_conversion(x_inter)
 
         # print(x_inter.shape, '3')
-        x_subset, features = self._subset_to_features(x_inter)
+        features = [self.id_col, "time_to_end"] + \
+            self._get_features(self.feat_set, self.data_name)
+        x_subset = x_inter[features]
 
         # print(x_inter.shape, '4')
         x_inter, pat_time_ids = self._convert_to_3d_arr(x_subset)
         x_subset = x_subset.to_numpy().astype(np.float32)
 
         # print(x_inter.shape, '5')
-        x_inter = self._normalize(x_inter)
+        self.min = np.nanmin(x_inter, axis=0, keepdims=True)
+        self.max = np.nanmax(x_inter, axis=0, keepdims=True)
+        x_inter = np.divide(x_inter - self.min, self.max - self.min)
 
         # print(x_inter.shape, '6')
         x_out, mask = self._impute(x_inter)
@@ -133,7 +136,7 @@ class CustomDataset(Dataset):
                 f"No available datasets. Input Folder provided {data_fd}")
         return X, y
 
-    def get_ids(self, data_name):
+    def _get_ids(self, data_name):
 
         if "MIMIC" in data_name:
             id_col, time_col, needs_time_to_end = "hadm_id", "sampled_time_to_end(1H)", False
@@ -145,13 +148,13 @@ class CustomDataset(Dataset):
         return id_col, time_col, needs_time_to_end
 
     def _impute(self, X):
-        s1 = self._numpy_forward_fill(X)
-        s2 = self._numpy_backward_fill(s1)
+        s1 = self._forward_fill(X)
+        s2 = self._backward_fill(s1)
         s3 = self._median_fill(s2)
         mask = np.isnan(X)
         return s3, mask
 
-    def _convert_datetime_to_hour(self, series):
+    def _convert_date_to_hour(self, series):
         return series.dt.total_seconds() / 3600
 
     def _get_features(self, key, data_name="MIMIC"):
@@ -165,8 +168,7 @@ class CustomDataset(Dataset):
                 vars1, vars2 = None, None
 
             else:
-                raise ValueError(
-                    f"No available datasets. Input provided {data_name}")
+                raise ValueError(f"No available datasets. Input provided {data_name}")
 
             features = set([])
             if "vit" in key.lower():
@@ -189,29 +191,23 @@ class CustomDataset(Dataset):
                 features = self._get_features("vit-lab-sta", data_name)
 
             sorted_features = sorted(features)
-            print(
-                f"\n{data_name} data has been subsettted to the following features: \n {sorted_features}.")
+            print(f"\n{data_name} data has been subsettted to the following features: \n {sorted_features}.")
 
             return sorted_features
 
         else:
-            raise TypeError(
-                f"Argument key must be one of type str or list, type {type(key)} was given.")
+            raise TypeError(f"Argument key must be one of type str or list, type {type(key)} was given.")
 
-    def _numpy_forward_fill(self, array):
+    def _forward_fill(self, array):
         arr_mask = np.isnan(array)
         arr_out = np.copy(array)
-        arr_inter = np.where(~ arr_mask, np.arange(
-            arr_mask.shape[1]).reshape(1, -1, 1), 0)
-        np.maximum.accumulate(arr_inter, axis=1,
-                              out=arr_inter)  
-        arr_out = arr_out[np.arange(arr_out.shape[0])[:, None, None],
-                              arr_inter,
-                              np.arange(arr_out.shape[-1])[None, None, :]]
+        arr_inter = np.where(~ arr_mask, np.arange(arr_mask.shape[1]).reshape(1, -1, 1), 0)
+        np.maximum.accumulate(arr_inter, axis=1,out=arr_inter)  
+        arr_out = arr_out[np.arange(arr_out.shape[0])[:, None, None],arr_inter, np.arange(arr_out.shape[-1])[None, None, :]]
 
         return arr_out
 
-    def _numpy_backward_fill(self, array):
+    def _backward_fill(self, array):
         arr_mask = np.isnan(array)
         arr_out = np.copy(array)
 
@@ -252,17 +248,17 @@ class CustomDataset(Dataset):
             raise AssertionError("Input format error.")
 
 
-    def _add_time_to_end(self, X):
+    def _add_col_time_to_end(self, X):
         x_inter = X.copy(deep=True)
         if self.needs_time_to_end_computation:
             times = X.groupby(self.id_col).apply(
                 lambda x: x.loc[:, self.time_col].max() - x.loc[:, self.time_col])
-            x_inter["time_to_end"] = self._convert_datetime_to_hour(
+            x_inter["time_to_end"] = self._convert_date_to_hour(
                 times).values
 
         else:
             x_inter["time_to_end"] = x_inter[self.time_col].values
-            x_inter["time_to_end"] = self._convert_datetime_to_hour(
+            x_inter["time_to_end"] = self._convert_date_to_hour(
                 x_inter.loc[:, "time_to_end"])
 
         self.time_col = "time_to_end"
@@ -289,11 +285,6 @@ class CustomDataset(Dataset):
         assert X["time_to_end"].between(
             min_time, max_time, inclusive='left').all() == True
 
-    def _subset_to_features(self, X):
-        features = [self.id_col, "time_to_end"] + \
-            self._get_features(self.feat_set, self.data_name)
-
-        return X[features], features
 
     def _convert_to_3d_arr(self, X):
         max_time = X.groupby(self.id_col).count()["time_to_end"].max()
@@ -321,11 +312,6 @@ class CustomDataset(Dataset):
 
         return array_out.astype("float32"), array_id_times.astype("float32") 
 
-
-    def _normalize(self, X):
-        self.min = np.nanmin(X, axis=0, keepdims=True)
-        self.max = np.nanmax(X, axis=0, keepdims=True)
-        return np.divide(X - self.min, self.max - self.min)
 
 
 
