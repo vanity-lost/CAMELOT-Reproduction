@@ -104,7 +104,7 @@ class CustomDataset(Dataset):
         x_out, mask = self._impute(x_inter)
         # print(x_out.shape, '7')
 
-        outcomes = MIMIC_OUTCOME_NAMES
+        outcomes = self._get_outcomes(self.data_name)
         y_data = data[1][outcomes]
         y_out = y_data.to_numpy().astype("float32")
         y_data = y_data.to_numpy().astype("float32")
@@ -123,19 +123,31 @@ class CustomDataset(Dataset):
         except AssertionError:
             print(data_fd)
 
+        if "MIMIC" in data_name:
 
-        X = pd.read_csv(data_fd + "vitals_process.csv",
+            X = pd.read_csv(data_fd + "vitals_process.csv",
                             parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
-        y = pd.read_csv(data_fd + f"outcomes_{window}h_process.csv", index_col=0)
-        # for Kaggle:
-        # X = pd.read_csv("vitals_process.csv", parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
-        # y = pd.read_csv(f"outcomes_{window}h_process.csv", index_col=0)
+            y = pd.read_csv(
+                data_fd + f"outcomes_{window}h_process.csv", index_col=0)
+            # for Kaggle:
+            # X = pd.read_csv("vitals_process.csv", parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
+            # y = pd.read_csv(f"outcomes_{window}h_process.csv", index_col=0)
 
-        X = convert_to_timedelta(X, *MIMIC_PARSE_TD_VARS)
+            X = convert_to_timedelta(X, *MIMIC_PARSE_TD_VARS)
+
+        else:
+            raise ValueError(
+                f"No available datasets. Input Folder provided {data_fd}")
         return X, y
 
     def get_ids(self, data_name):
-        id_col, time_col, needs_time_to_end = "hadm_id", "sampled_time_to_end(1H)", False
+
+        if "MIMIC" in data_name:
+            id_col, time_col, needs_time_to_end = "hadm_id", "sampled_time_to_end(1H)", False
+
+        else:
+            raise ValueError(
+                f"No available datasets. Input Folder provided {data_name}")
 
         return id_col, time_col, needs_time_to_end
 
@@ -154,9 +166,14 @@ class CustomDataset(Dataset):
             return key
 
         elif isinstance(key, str):
-            vitals = MIMIC_VITALS
-            static = MIMIC_STATIC
-            vars1, vars2 = None, None
+            if data_name == "MIMIC":
+                vitals = MIMIC_VITALS
+                static = MIMIC_STATIC
+                vars1, vars2 = None, None
+
+            else:
+                raise ValueError(
+                    f"No available datasets. Input provided {data_name}")
 
             features = set([])
             if "vit" in key.lower():
@@ -184,6 +201,9 @@ class CustomDataset(Dataset):
 
             return sorted_features
 
+        else:
+            raise TypeError(
+                f"Argument key must be one of type str or list, type {type(key)} was given.")
 
     def _numpy_forward_fill(self, array):
         arr_mask = np.isnan(array)
@@ -221,6 +241,9 @@ class CustomDataset(Dataset):
 
         return arr_out
 
+    def _get_outcomes(self, data_name):
+        if data_name == "MIMIC":
+            return MIMIC_OUTCOME_NAMES
 
     def _check_input_format(self, X, y):
         try:
@@ -260,7 +283,8 @@ class CustomDataset(Dataset):
             return X[X['time_to_end'].between(min_time, max_time, inclusive="left")]
 
         except Exception:
-            raise ValueError(f"Could not truncate.")
+            raise ValueError(
+                f"Could not truncate.")
 
     def _check_time_conversion(self, X):
         min_time, max_time = self.time_range
@@ -314,6 +338,10 @@ def collate_fn(data):
     x, y, mask, pat_time_ids, features, outcomes, x_subset, y_data, id_col, time_col, needs_time_to_end_computation, data_name, feat_set, time_range, target_window, min, max = zip(
         *data)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    data_config = {"data_name": data_name, "feat_set": feat_set,
+                   "time_range (h)": time_range, "target_window": target_window}
+    data_properties = {"feats": features, "id_col": id_col, "time_col": time_col,
+                       "norm_min": min, "norm_max": max, "outc_names": outcomes}
 
     x = torch.tensor(np.array(x))
     y = torch.tensor(np.array(y))

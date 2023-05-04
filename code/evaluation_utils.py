@@ -139,15 +139,15 @@ def train_loop(model, train_dataset, val_dataset, train_loader, val_loader, SEED
                 if loss_mat[i, 0, 1] < best_loss:
                     count = 0
                     best_loss = loss_mat[i, 0, 1]
-                    torch.save(model.state_dict(), './best_model')
+                    torch.save(model.state_dict(), 'best_model')
                 else:
                     count += 1
                     if count >= 50:
-                        model.load_state_dict(torch.load('./best_model'))
+                        model.load_state_dict(torch.load('best_model'))
         lr_scheduler.step(loss_mat[i, 0, 1])
         cluster_lr_scheduler.step(loss_mat[i, 0, 1])
 
-    model.load_state_dict(torch.load('./best_model'))
+    model.load_state_dict(torch.load('best_model'))
     return model
 
 
@@ -164,7 +164,8 @@ def get_test_results(model, test_loader):
 def calc_metrics(real, preds):
     auc = roc_auc_score(real, preds, average=None)
 
-    labels_true, labels_pred = np.argmax(real, axis=1), np.argmax(preds, axis=1)
+    labels_true, labels_pred = np.argmax(
+        real, axis=1), np.argmax(preds, axis=1)
 
     # Compute F1
     f1 = f1_score(labels_true, labels_pred, average=None)
