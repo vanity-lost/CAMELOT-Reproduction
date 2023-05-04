@@ -109,6 +109,8 @@ class CustomDataset(Dataset):
     def _load(self, data_name, window=4):
 
         data_fd = './data/MIMIC/processed/'
+        # for Kaggle:
+        # data_fd = f"/kaggle/input/mimic-processed/"
         try:
             os.path.exists(data_fd)
         except AssertionError:
@@ -121,8 +123,8 @@ class CustomDataset(Dataset):
             y = pd.read_csv(
                 data_fd + f"outcomes_{window}h_process.csv", index_col=0)
             # for Kaggle:
-#             X = pd.read_csv("vitals_process.csv", parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
-#             y = pd.read_csv(f"outcomes_{window}h_process.csv", index_col=0)
+            # X = pd.read_csv("vitals_process.csv", parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
+            # y = pd.read_csv(f"outcomes_{window}h_process.csv", index_col=0)
 
             X = convert_to_timedelta(X, *MIMIC_PARSE_TD_VARS)
 
