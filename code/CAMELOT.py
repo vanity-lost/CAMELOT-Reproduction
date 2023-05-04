@@ -1,31 +1,18 @@
-from sklearn.cluster import KMeans
-import numpy as np
-from tqdm import trange
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
+from sklearn.cluster import KMeans
+from tqdm import trange
 
-from model_utils import Encoder, Identifier, Predictor, calc_l1_l2_loss
-from utils import calc_pred_loss
+from model_utils import Encoder, Identifier, Predictor
+from train_utils import calc_l1_l2_loss, calc_pred_loss, class_weight
 
-SEED = 12345
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def class_weight(y):
-    class_numbers = torch.sum(y, dim=0)
-
-    # Check no class is missing
-    if not torch.all(class_numbers > 0):
-        class_numbers += 1
-    inv_class_num = 1 / class_numbers
-    return inv_class_num / torch.sum(inv_class_num)
-
-
 class CamelotModel(nn.Module):
-    def __init__(self, input_shape, num_clusters=10, latent_dim=128, seed=SEED, output_dim=4,
+    def __init__(self, input_shape, num_clusters=10, latent_dim=128, seed=12345, output_dim=4,
                  alpha=0.01, beta=0.001, regularization=(0.01, 0.01), dropout=0.0,
                  cluster_rep_lr=0.001, weighted_loss=True, attention_hidden_dim=16,
                  mlp_hidden_dim=30):
@@ -104,14 +91,6 @@ class CamelotModel(nn.Module):
     def compute_cluster_phenotypes(self):
         return self.Predictor(self.cluster_rep_set).numpy()
 
-    # def compute_unnorm_attention_weights(self, inputs):
-    #     # no idea
-    #     return self.Encoder.compute_unnorm_scores(inputs, cluster_reps=self.cluster_rep_set)
-
-    # def compute_norm_attention_weights(self, inputs):
-    #     # no idea
-    #     return self.Encoder.compute_norm_scores(inputs, cluster_reps=self.cluster_rep_set)
-
     def initialize(self, train_data, val_data):
         x_train, y_train = train_data
         x_val, y_val = val_data
@@ -167,7 +146,8 @@ class CamelotModel(nn.Module):
 
     def initialize_cluster(self, x_train, x_val):
         z = self.Encoder(x_train).cpu().detach().numpy()
-        kmeans = KMeans(self.num_clusters, random_state=self.seed, n_init='auto')
+        kmeans = KMeans(self.num_clusters,
+                        random_state=self.seed, n_init='auto')
         kmeans.fit(z)
         print('Kmeans initialization done!')
 

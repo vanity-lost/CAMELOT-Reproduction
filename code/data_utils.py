@@ -1,245 +1,25 @@
-#!/usr/bin/env python3
-# INSERT FILE DESCRIPTION
-
-"""
-Util functions to run Model. Includes Data loading, etc...
-"""
 import os
-from typing import List, Union
-
 import numpy as np
 import pandas as pd
-
 from tqdm import tqdm
-import datetime as dt
+import torch
+from torch.utils.data import Dataset, DataLoader
 
-tqdm.pandas()
 
+# ---------------------------------------------------------------------------------------
+"Global variables for specific dataset information loading."
 
-def _compute_last_target_id(df: pd.DataFrame, time_col: str = "intime", mode: str = "max") -> pd.DataFrame:
-    """Identify last ids given df according to time given by time_col column. Mode determines min or max."""
-    if mode == "max":
-        time = df[time_col].max()
-    elif mode == "min":
-        time = df[time_col].min()
-    else:
-        raise ValueError("mode must be one of ['min', 'max']. Got {}".format(mode))
+MIMIC_PARSE_TIME_VARS = ["intime", "outtime", "chartmax"]
+MIMIC_PARSE_TD_VARS = [
+    "sampled_time_to_end(1H)", "time_to_end", "time_to_end_min", "time_to_end_max"]
+MIMIC_VITALS = ["TEMP", "HR", "RR", "SPO2", "SBP", "DBP"]
+MIMIC_STATIC = ["age", "gender", "ESI"]
+MIMIC_OUTCOME_NAMES = ["De", "I", "W", "Di"]
 
-    last_ids = df[df[time_col] == time]
+# Identifiers for main ids.
+MAIN_ID_LIST = ["subject_id", "hadm_id", "stay_id", "patient_id", "pat_id"]
 
-    return last_ids
-
-
-def _rows_are_in(df1: pd.DataFrame, df2: pd.DataFrame, matching_columns: Union[List[str], str]) -> pd.DataFrame:
-    """
-    Checks if values present in row of df1 exist for all columns in df2. Note that this does not necessarily mean
-    the whole row of df1 is in df2, but is good enough for application.
-
-    Returns: array of indices indicating the relevant rows of df1.
-    """
-    if isinstance(matching_columns, str):
-        matching_columns = [matching_columns]
-
-    # Iterate through each column
-    matching_ids = np.ones(df1.shape[0])
-    for col in tqdm(matching_columns):
-        col_matching = df1[col].isin(df2[col].values).values  # where df1 col is subset of df2 col
-        matching_ids = np.logical_and(matching_ids, col_matching)  # match with columns already looked at
-
-    return matching_ids
-
-
-def _compute_second_transfer_info(df: pd.DataFrame, time_col, target_cols):
-    """
-    Given transfer data for a unique id, compute the second transfer as given by time_col.
-
-    return: pd.Series with corresponding second transfer info.
-    """
-    time_info = df[time_col]
-    second_transfer_time = time_info[time_info != time_info.min()].min()
-
-    # Identify second transfer info - can be empty, unique, or repeated instances
-    second_transfer = df[df[time_col] == second_transfer_time]
-
-    if second_transfer.empty:
-        output = [df.name, df["hadm_id"].iloc[0], df["transfer_id"].iloc[0]] + [np.nan] * (len(target_cols) - 3)
-        return pd.Series(data=output, index=target_cols)
-
-    elif second_transfer.shape[0] == 1:
-        return pd.Series(data=second_transfer.squeeze().values, index=target_cols)
-
-    else:  # There should be NONE
-        print(second_transfer)
-        raise ValueError("Something's gone wrong! No expected repeated second transfers with the same time.")
-
-
-def convert_columns_to_dt(df: pd.DataFrame, columns: Union[str, List[str]]):
-    """Convert columns of dataframe to datetime format, as per given"""
-    if isinstance(columns, str):
-        columns = [columns]
-
-    for col in columns:
-        df[col] = pd.to_datetime(df.loc[:, col].values)
-
-    return df
-
-
-def subsetted_by(df1: pd.DataFrame, df2: pd.DataFrame, matching_columns: Union[List[str], str]) -> pd.DataFrame:
-    """
-    Subset df1 based on matching_columns, according to values existing in df2.
-
-    Returns: pd.DataFrame subset of df1 for which rows are a subset of df2
-    """
-
-    return df1.iloc[_rows_are_in(df1, df2, matching_columns), :]
-
-
-def endpoint_target_ids(df: pd.DataFrame, identifier: str, time_col: str = "intime", mode: str = "max") -> pd.DataFrame:
-    """
-    Given identifier target ("id"), compute the endpoint associated with time column.
-
-    Returns: pd.DataFrame with ids and associated endpoint information.
-    """
-    last_ids = df.groupby(identifier, as_index=False).progress_apply(
-        lambda x: _compute_last_target_id(x, time_col=time_col, mode=mode))
-
-    return last_ids.reset_index(drop=True)
-
-
-def compute_second_transfer(df: pd.DataFrame, identifier: str, time_col: str, target_cols: pd.Index) -> pd.DataFrame:
-    """
-    Given transfer data represented by unique identifier ("id"), compute the second transfer of the admission.
-    Second Transfer defined as second present intime in the date (if multiple, this is flagged). If there are
-    no transfers after, then return np.nan. target_cols is the target information columns.
-
-    This function checks the second transfer intime is after outtime of first transfer record.
-
-    Returns: pd.DataFrame with id and associated second transfer information (intime/outtime, unit, etc...)
-    """
-    second_transfer_info = df.groupby(identifier, as_index=False).progress_apply(
-        lambda x: _compute_second_transfer_info(x, time_col, target_cols))
-
-    return second_transfer_info.reset_index(drop=True)
-
-
-def _has_many_nas(df: pd.DataFrame, targets: Union[List[str], str], min_count: int, min_frac: float) -> bool:
-    """
-    For a given admission/stay with corresponding vital sign information, return boolean indicating whether low
-    missingness conditions are satisfied. These are:
-    a) At least min_count observations.
-    b) Proportion of missing values smaller than min_frac for ALL targets.
-
-    returns: boolean indicating admission should be kept.
-    """
-    if isinstance(targets, str):
-        targets = [targets]
-
-    has_minimum_counts = df.shape[0] > min_count
-    has_less_NA_than_frac = df[targets].isna().sum() <= min_frac * df.shape[0]
-
-    return has_minimum_counts and has_less_NA_than_frac.all()
-
-
-def remove_adms_high_missingness(df: pd.DataFrame, targets: Union[List[str], str],
-                                 identifier: str, min_count: int, min_frac: float) -> pd.DataFrame:
-    """
-    Given vital sign data, remove admissions with too little information. This is defined as either:
-    a) Number of observations smaller than allowed min_count.
-    b) Proportion of missing values in ANY of the targets is higher than min_frac.
-
-    Returns: pd.DataFrame - Vital sign data of the same type, except only admissions with enough information are kept.
-    """
-    output = df.groupby(identifier, as_index=False).filter(
-        lambda x: _has_many_nas(x, targets, min_count, min_frac))
-
-    return output.reset_index(drop=True)
-
-
-def _resample_adm(df: pd.DataFrame, rule: str, time_id: str,
-                  time_vars: Union[List[str], str], static_vars: Union[List[str], str]) -> pd.DataFrame:
-    """
-    For a particular stay with vital sign data as per df, resample trajectory data (subsetted to time_vars),
-    according to index given by time_to_end and as defined by rule. It is important that time_to_end decreases
-    throughout admissions and hits 0 at the end - this is for resampling purposes.
-
-    Params:
-    df: pd.Dataframe, containing trajectory and static data for each admission.
-    rule: str, indicates the resampling rule (to be fed to pd.DataFrame.resample())
-
-    static_vars is a list of relevant identifier information
-
-    returns: Resampled admission data. Furthermore, two more info columns are indicated (chartmax and chartmin).
-    """
-    if isinstance(time_vars, str):
-        time_vars = [time_vars]
-
-    if isinstance(static_vars, str):
-        static_vars = [static_vars]
-
-    # Add fake observation (with missing values) so that resampling starts at end of admission
-    df_inter = df[time_vars + ["time_to_end"]]
-    df_inter = df_inter.append(pd.Series(data=[np.nan] * len(time_vars) + [dt.timedelta(seconds=0)],
-                                         index=df_inter.columns), ignore_index=True)
-
-    # resample on time_to_end axis
-    output = df_inter.sort_values(by="time_to_end", ascending=False).resample(
-        on="time_to_end",
-        rule=rule, closed="left", label="left").mean()
-
-    # Compute static ids manually and add information about max and min time id values
-    output[static_vars] = df[static_vars].iloc[0, :].values
-    output[time_id + "_min"] = df[time_id].min()
-    output[time_id + "_max"] = df[time_id].max()
-
-    # Reset index to obtain resampled values
-    output.index.name = f"sampled_time_to_end({rule})"
-    output.reset_index(drop=False, inplace=True)
-
-    return output
-
-
-def compute_time_to_end(df: pd.DataFrame, id_key: str, time_id: str, end_col: str):
-    """
-    Compute time to end of admission for a given observation associated with a particular admission id.
-
-    df: pd.DataFrame with trajectory information.
-    id_key: str - column of df representing the unique id admission identifier.
-    time_id: str - column of df indicating time observations was taken.
-    end_col: str - column of df indicating, for each observation, the end time of the corresponding admission.
-
-    returns: sorted pd.DataFrame with an extra column indicating time to end of admission. This will be used for
-    resampling.
-    """
-    df_inter = df.copy()
-    df_inter["time_to_end"] = df_inter[end_col] - df_inter[time_id]
-    df_inter.sort_values(by=[id_key, "time_to_end"], ascending=[True, False], inplace=True)
-
-    return df_inter
-
-
-def conversion_to_block(df: pd.DataFrame, id_key: str, rule: str,
-                        time_vars: Union[List[str], str], static_vars: Union[List[str], str]) -> pd.DataFrame:
-    """
-    Given trajectory data over multiple admissions (as specified by id), resample each admission according to time
-    until the end of the admission. Resampling according to rule and apply to_time_vars.
-
-    df: pd.DataFrame containing trajectory and static data.
-    id_key: str, unique identifier per admission
-    rule: str, indicates resampling rule (to be fed to pd.DataFrame.resample())
-    time_vars: list of str, indicates columns of df to be resampled.
-    static_vars: list of str, indicates columns of df which are static, and therefore not resampled.
-
-    return: Dataframe with resampled vital sign data.
-    """
-    if "time_to_end" not in df.columns:
-        raise ValueError("'time_to_end' not found in columns of dataframe. Run 'compute_time_to_end' function first.")
-    assert df[id_key].is_monotonic and df.groupby(id_key).apply(
-        lambda x: x["time_to_end"].is_monotonic_decreasing).all()
-
-    # Resample admission according to time_to_end
-    output = df.groupby(id_key).progress_apply(lambda x: _resample_adm(x, rule, "time_to_end", time_vars, static_vars))
-
-    return output.reset_index(drop=True)
+# ----------------------------------------------------------------------------------------
 
 
 def convert_to_timedelta(df: pd.DataFrame, *args) -> pd.DataFrame:
@@ -251,72 +31,334 @@ def convert_to_timedelta(df: pd.DataFrame, *args) -> pd.DataFrame:
     return output
 
 
-def _check_all_tables_exist(folder_path: str):
-    """TO MOVE TO TEST"""
-    try:
-        assert os.path.exists(folder_path)
-    except Exception:
-        raise ValueError("Folder path does not exist - Input {}".format(folder_path))
+class CustomDataset(Dataset):
+
+    def __init__(self, data_name="MIMIC", target_window=12, feat_set='vit-sta', time_range=(0, 6), parameters=None):
+        if parameters is None:
+            self.data_name = data_name
+            self.target_window = target_window
+            self.feat_set = feat_set
+            self.time_range = time_range
+            self.id_col = None
+            self.time_col = None
+            self.needs_time_to_end_computation = False
+            self.min = None
+            self.max = None
+
+            # Load & process data
+            self.id_col, self.time_col, self.needs_time_to_end_computation = self.get_ids(
+                self.data_name)
+            self.x, self.y, self.mask, self.pat_time_ids, self.features, self.outcomes, self.x_subset, self.y_data = self.load_transform()
+        else:
+            self.x, self.y, self.mask, self.pat_time_ids, self.features, self.outcomes, self.x_subset, self.y_data, self.id_col, self.time_col, self.needs_time_to_end_computation, self.data_name, self.feat_set, self.time_range, self.target_window, self.min, self.max = parameters
+
+    def __len__(self):
+        return self.x.shape[0]
+
+    def __getitem__(self, idx):
+        x = self.x[idx, :, :]
+        y = self.y[idx, :]
+        mask = self.mask[idx, :, :]
+        pat_time_ids = self.pat_time_ids[idx, :, :]
+        features = self.features
+        outcomes = self.outcomes
+        x_subset = self.x_subset[idx, :]
+        y_data = self.y_data[idx, :]
+        id_col = self.id_col
+        time_col = self.time_col
+        needs_time_to_end_computation = self.needs_time_to_end_computation
+        data_name = self.data_name
+        feat_set = self.feat_set
+        time_range = self.time_range
+        target_window = self.target_window
+        min = self.min
+        max = self.max
+        return x, y, mask, pat_time_ids, features, outcomes, x_subset, y_data, id_col, time_col, needs_time_to_end_computation, data_name, feat_set, time_range, target_window, min, max
+
+    def get_subset(self, idx):
+        return CustomDataset(parameters=self[idx])
+
+    def load_transform(self):
+        # Load data
+        data = self._load(self.data_name, window=self.target_window)
+        self.id_col, self.time_col, self.needs_time_to_end_computation = self.get_ids(
+            self.data_name)
+        # print(data[0].shape, '0')
+        x_inter = self._add_time_to_end(data[0])
+        # print(x_inter.shape, '1')
+        x_inter = self._truncate(x_inter)
+        # print(x_inter.shape, '2')
+        self._check_time_conversion(x_inter)
+
+        # print(x_inter.shape, '3')
+        x_subset, features = self._subset_to_features(x_inter)
+
+        # print(x_inter.shape, '4')
+        x_inter, pat_time_ids = self._convert_to_3d_arr(x_subset)
+        x_subset = x_subset.to_numpy().astype(np.float32)
+
+        # print(x_inter.shape, '5')
+        x_inter = self._normalize(x_inter)
+
+        # print(x_inter.shape, '6')
+        x_out, mask = self._impute(x_inter)
+        # print(x_out.shape, '7')
+
+        outcomes = self._get_outcomes(self.data_name)
+        y_data = data[1][outcomes]
+        y_out = y_data.to_numpy().astype("float32")
+        y_data = y_data.to_numpy().astype("float32")
+
+        self._check_input_format(x_out, y_out)
+
+        return x_out, y_out, mask, pat_time_ids, features, outcomes, x_subset, y_data
+
+    def _load(self, data_name, window=4):
+
+        data_fd = './data/MIMIC/processed/'
+        # for Kaggle:
+        # data_fd = f"/kaggle/input/mimic-processed/"
+        try:
+            os.path.exists(data_fd)
+        except AssertionError:
+            print(data_fd)
+
+        if "MIMIC" in data_name:
+
+            X = pd.read_csv(data_fd + "vitals_process.csv",
+                            parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
+            y = pd.read_csv(
+                data_fd + f"outcomes_{window}h_process.csv", index_col=0)
+            # for Kaggle:
+            # X = pd.read_csv("vitals_process.csv", parse_dates=MIMIC_PARSE_TIME_VARS, header=0, index_col=0)
+            # y = pd.read_csv(f"outcomes_{window}h_process.csv", index_col=0)
+
+            X = convert_to_timedelta(X, *MIMIC_PARSE_TD_VARS)
+
+        else:
+            raise ValueError(
+                f"No available datasets. Input Folder provided {data_fd}")
+        return X, y
+
+    def get_ids(self, data_name):
+
+        if "MIMIC" in data_name:
+            id_col, time_col, needs_time_to_end = "hadm_id", "sampled_time_to_end(1H)", False
+
+        else:
+            raise ValueError(
+                f"No available datasets. Input Folder provided {data_name}")
+
+        return id_col, time_col, needs_time_to_end
+
+    def _impute(self, X):
+        s1 = self._numpy_forward_fill(X)
+        s2 = self._numpy_backward_fill(s1)
+        s3 = self._median_fill(s2)
+        mask = np.isnan(X)
+        return s3, mask
+
+    def _convert_datetime_to_hour(self, series):
+        return series.dt.total_seconds() / 3600
+
+    def _get_features(self, key, data_name="MIMIC"):
+        if isinstance(key, list):
+            return key
+
+        elif isinstance(key, str):
+            if data_name == "MIMIC":
+                vitals = MIMIC_VITALS
+                static = MIMIC_STATIC
+                vars1, vars2 = None, None
+
+            else:
+                raise ValueError(
+                    f"No available datasets. Input provided {data_name}")
+
+            features = set([])
+            if "vit" in key.lower():
+                features.update(vitals)
+
+            if "vars1" in key.lower():
+                features.update(vars1)
+
+            if "vars2" in key.lower():
+                features.update(vars2)
+
+            if "lab" in key.lower():
+                features.update(vars1)
+                features.update(vars2)
+
+            if "sta" in key.lower():
+                features.update(static)
+
+            if "all" in key.lower():
+                features = self._get_features("vit-lab-sta", data_name)
+
+            sorted_features = sorted(features)
+            print(
+                f"\n{data_name} data has been subsettted to the following features: \n {sorted_features}.")
+
+            return sorted_features
+
+        else:
+            raise TypeError(
+                f"Argument key must be one of type str or list, type {type(key)} was given.")
+
+    def _numpy_forward_fill(self, array):
+        arr_mask = np.isnan(array)
+        arr_out = np.copy(array)
+        arr_inter = np.where(~ arr_mask, np.arange(
+            arr_mask.shape[1]).reshape(1, -1, 1), 0)
+        np.maximum.accumulate(arr_inter, axis=1,
+                              out=arr_inter)
+        arr_out = arr_out[np.arange(arr_out.shape[0])[:, None, None],
+                          arr_inter,
+                          np.arange(arr_out.shape[-1])[None, None, :]]
+
+        return arr_out
+
+    def _numpy_backward_fill(self, array):
+        arr_mask = np.isnan(array)
+        arr_out = np.copy(array)
+
+        arr_inter = np.where(~ arr_mask, np.arange(
+            arr_mask.shape[1]).reshape(1, -1, 1), arr_mask.shape[1] - 1)
+        arr_inter = np.minimum.accumulate(
+            arr_inter[:, ::-1], axis=1)[:, ::-1]
+        arr_out = arr_out[np.arange(arr_out.shape[0])[:, None, None],
+                          arr_inter,
+                          np.arange(arr_out.shape[-1])[None, None, :]]
+
+        return arr_out
+
+    def _median_fill(self, array):
+        arr_mask = np.isnan(array)
+        arr_out = np.copy(array)
+        array_med = np.nanmedian(np.nanmedian(
+            array, axis=0, keepdims=True), axis=1, keepdims=True)
+        arr_out = np.where(arr_mask, array_med, arr_out)
+
+        return arr_out
+
+    def _get_outcomes(self, data_name):
+        if data_name == "MIMIC":
+            return MIMIC_OUTCOME_NAMES
+
+    def _check_input_format(self, X, y):
+        try:
+            assert X.shape[0] == y.shape[0]
+            assert len(X.shape) == 3
+            assert len(y.shape) == 2
+            assert np.sum(np.isnan(X)) + np.sum(np.isnan(y)) == 0
+            assert np.all(np.sum(y, axis=1) == 1)
+
+        except Exception as e:
+            print(e)
+            raise AssertionError("Input format error.")
+
+    def _add_time_to_end(self, X):
+        x_inter = X.copy(deep=True)
+        if self.needs_time_to_end_computation:
+            times = X.groupby(self.id_col).apply(
+                lambda x: x.loc[:, self.time_col].max() - x.loc[:, self.time_col])
+            x_inter["time_to_end"] = self._convert_datetime_to_hour(
+                times).values
+
+        else:
+            x_inter["time_to_end"] = x_inter[self.time_col].values
+            x_inter["time_to_end"] = self._convert_datetime_to_hour(
+                x_inter.loc[:, "time_to_end"])
+
+        self.time_col = "time_to_end"
+        x_out = x_inter.sort_values(
+            by=[self.id_col, "time_to_end"], ascending=[True, False])
+
+        return x_out
+
+    def _truncate(self, X):
+        try:
+            min_time, max_time = self.time_range
+            # print(self.time_range)
+            return X[X['time_to_end'].between(min_time, max_time, inclusive="left")]
+
+        except Exception:
+            raise ValueError(
+                f"Could not truncate.")
+
+    def _check_time_conversion(self, X):
+        min_time, max_time = self.time_range
+
+        assert X[self.id_col].is_monotonic_increasing is True
+        assert X.groupby(self.id_col).apply(
+            lambda x: x["time_to_end"].is_monotonic_decreasing).all() == True
+        assert X["time_to_end"].between(
+            min_time, max_time, inclusive='left').all() == True
+
+    def _subset_to_features(self, X):
+        features = [self.id_col, "time_to_end"] + \
+            self._get_features(self.feat_set, self.data_name)
+
+        return X[features], features
+
+    def _convert_to_3d_arr(self, X):
+        max_time = X.groupby(self.id_col).count()["time_to_end"].max()
+        num_ids = X[self.id_col].nunique()
+        feats = [col for col in X.columns if col not in [
+            self.id_col, "time_to_end"]]
+        id_list = X[self.id_col].unique()
+
+        array_out = np.empty(shape=(num_ids, max_time, len(feats)))
+        array_out[:] = np.nan
+        array_id_times = np.empty(shape=(num_ids, max_time, 2))
+        array_id_times[:, :, 0] = np.repeat(np.expand_dims(
+            id_list, axis=-1), repeats=max_time, axis=-1)
+
+        for id_ in tqdm(id_list):
+            index_ = np.where(id_list == id_)[0]
+            x_id = X[X[self.id_col] == id_]
+
+            x_id_copy = x_id.copy()
+            x_id_copy["time_to_end"] = - x_id["time_to_end"].diff().values
+
+            array_out[index_, :x_id_copy.shape[0], :] = x_id_copy[feats].values
+            array_id_times[index_, :x_id_copy.shape[0],
+                           1] = x_id["time_to_end"].values
+
+        return array_out.astype("float32"), array_id_times.astype("float32")
+
+    def _normalize(self, X):
+        self.min = np.nanmin(X, axis=0, keepdims=True)
+        self.max = np.nanmax(X, axis=0, keepdims=True)
+        return np.divide(X - self.min, self.max - self.min)
 
 
-def select_death_icu_acute(df, admissions_df, timedt):
-    """
-    Identify outcomes based on severity within the consequent 12 hours:
-    a) Death
-    b) Entry to ICU Careunit
-    c) Transfer to hospital ward
-    d) Discharge
+# Custom Dataloader
+def collate_fn(data):
+    x, y, mask, pat_time_ids, features, outcomes, x_subset, y_data, id_col, time_col, needs_time_to_end_computation, data_name, feat_set, time_range, target_window, min, max = zip(
+        *data)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    data_config = {"data_name": data_name, "feat_set": feat_set,
+                   "time_range (h)": time_range, "target_window": target_window}
+    data_properties = {"feats": features, "id_col": id_col, "time_col": time_col,
+                       "norm_min": min, "norm_max": max, "outc_names": outcomes}
 
-    Params:
-    - df - transfers dataframe corresponding to a particular admission.
-    - timedt - datetime timedelta indicating range window of prediction
+    x = torch.tensor(np.array(x))
+    y = torch.tensor(np.array(y))
+    x = x.to(device)
+    y = y.to(device)
 
-    Returns categorical encoding of the corresponding admission.
-    Else returns 0,0,0,0 if a mistake is found.
-    """
-    # Check admission contains only one such row
-    assert admissions_df.hadm_id.eq(df.name).sum() <= 1
+    return x, y
 
-    # Identify Last observed vitals for corresponding admission
-    hadm_information = admissions_df.query("hadm_id==@df.name").iloc[0, :]
-    window_start_point = hadm_information.loc["outtime"]
 
-    # First check if death exists
-    hadm_information = admissions_df.query("hadm_id==@df.name")
-    if not hadm_information.empty and not hadm_information.dod.isna().all():
-        time_of_death = hadm_information.dod.min()
-        time_from_start_point = (time_of_death - window_start_point)
+def load_data(train_dataset, val_dataset, test_dataset):
 
-        # try:
-        #     assert time_from_vitals >= dt.timedelta(seconds=0)
-        #
-        # except AssertionError:
-        #     return pd.Series(data=[0, 0, 0, 0, time_of_death], index=["De", "I", "W", "Di", "time"])
+    batch_size = 64
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-        # Check death within time window
-        if time_from_start_point < timedt:
-            return pd.Series(data=[1, 0, 0, 0, time_of_death], index=["De", "I", "W", "Di", "time"])
-
-    # Otherwise, consider other transfers
-    transfers_within_window = df[df["intime"].between(window_start_point, window_start_point + timedt)]
-
-    # Consider icu transfers within window
-    icu_cond1 = transfers_within_window.careunit.str.contains("(?i)ICU", na=False)  # regex ignore lowercase
-    icu_cond2 = transfers_within_window.careunit.str.contains("(?i)Neuro Stepdown", na=False)
-    has_icus = (icu_cond1 | icu_cond2)
-
-    if has_icus.sum() > 0:
-        icu_transfers = transfers_within_window[has_icus]
-        return pd.Series(data=[0, 1, 0, 0, icu_transfers.intime.min()],
-                         index=["De", "I", "W", "Di", "time"])
-
-    # Check to see if discharge has taken
-    discharges = transfers_within_window.eventtype.str.contains("discharge", na=False)
-    if discharges.sum() > 0:
-        return pd.Series(data=[0, 0, 0, 1, transfers_within_window[discharges].intime.min()],
-                         index=["De", "I", "W", "Di", "time"]
-                         )
-    else:
-        return pd.Series(data=[0, 0, 1, 0, transfers_within_window.intime.min()],
-                         index=["De", "I", "W", "Di", "time"]
-                         )
+    return train_loader, val_loader, test_loader

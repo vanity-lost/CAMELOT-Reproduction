@@ -133,39 +133,3 @@ class Predictor(nn.Module):
         x = self.fc4(x)
         x = self.softmax(x)
         return x
-
-
-class MyLRScheduler():
-    def __init__(self, optimizer, patience, min_lr, factor):
-        self.optimizer = optimizer
-        self.patience = patience
-        self.min_lr = min_lr
-        self.factor = factor
-        self.wait = 0
-        self.best_loss = float('inf')
-
-    def step(self, val_loss):
-        if val_loss < self.best_loss:
-            self.best_loss = val_loss
-            self.wait = 0
-        else:
-            self.wait += 1
-            if self.wait >= self.patience:
-                self.wait = 0
-                for param_group in self.optimizer.param_groups:
-                    old_lr = param_group['lr']
-                    new_lr = max(old_lr * self.factor, self.min_lr)
-                    param_group['lr'] = new_lr
-
-
-def calc_l1_l2_loss(part=None, layers=None):
-    para = []
-    if part:
-        for parameter in part.parameters():
-            para.append(parameter.view(-1))
-        parameters = torch.cat(para)
-    if layers:
-        for layer in layers:
-            para.extend(layer.parameters())
-        parameters = torch.cat([p.view(-1) for p in para])
-    return 1e-30 * torch.abs(parameters).sum() + 1e-30 * torch.square(parameters).sum()
