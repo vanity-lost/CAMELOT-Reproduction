@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import random
 
-from evaluation_utils import prepare_dataloader, get_test_results, calc_metrics
+from evaluation_utils import prepare_dataloader, train_loop, get_test_results, calc_metrics
 from CAMELOT import CamelotModel
 
 
@@ -16,11 +16,8 @@ def eval(SEED=1001):
 
     model = CamelotModel(input_shape=(
         train_dataset.x.shape[1], train_dataset.x.shape[2]), seed=SEED, num_clusters=10, latent_dim=64)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
-
-    model.load_state_dict(torch.load('best_model'))
-    model.eval()
+    model = train_loop(model, train_dataset, val_dataset,
+                       train_loader, val_loader, SEED=SEED)
 
     real, preds = get_test_results(model, test_loader)
 

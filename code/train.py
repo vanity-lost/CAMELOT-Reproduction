@@ -6,7 +6,7 @@ from evaluation_utils import prepare_dataloader, train_loop
 from CAMELOT import CamelotModel
 
 
-def train(SEED=12345):
+def train(SEED=1001):
     torch.random.manual_seed(SEED)
     np.random.seed(SEED)
     random.seed(SEED)

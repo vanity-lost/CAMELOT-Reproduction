@@ -57,12 +57,6 @@ class CamelotModel(nn.Module):
     def forward_pass(self, x):
         z = self.Encoder(x)
         probs = self.Identifier(z)
-        # print(probs.shape)
-        # samples = self.get_sample(probs)
-        # # print(samples.shape)
-        # representations = self.get_representations(samples)
-        # # print(representations.shape)
-        # return self.Predictor(representations), probs
         clus_phens = self.Predictor(self.cluster_rep_set.to(device))
         y_pred = torch.matmul(probs, clus_phens)
 
